@@ -210,6 +210,7 @@
     _onClick: function (e) {
       var $el = $(e.target);
       e.preventDefault();
+      e.stopPropagation();
       e.originalEvent.keepTextCompleteDropdown = this.id;
       if (!$el.hasClass('textcomplete-item')) {
         $el = $el.closest('.textcomplete-item');
