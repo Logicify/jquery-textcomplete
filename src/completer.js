@@ -226,7 +226,7 @@
           free();
           self._clearAtNext = true; // Call dropdown.clear at the next time.
         }
-      }, match);
+      }, match, self.dropdown.data);
     }),
 
     // Build a parameter for Dropdown#render.
