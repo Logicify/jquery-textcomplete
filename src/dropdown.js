@@ -1,6 +1,8 @@
 +function ($) {
   'use strict';
 
+  var $window = $(window);
+
   var include = function (zippedData, datum) {
     var i, elem;
     var idProperty = datum.strategy.idProperty
@@ -24,6 +26,16 @@
     });
   });
 
+  var commands = {
+    SKIP_DEFAULT: 0,
+    KEY_UP: 1,
+    KEY_DOWN: 2,
+    KEY_ENTER: 3,
+    KEY_PAGEUP: 4,
+    KEY_PAGEDOWN: 5,
+    KEY_ESCAPE: 6
+  };
+
   // Dropdown view
   // =============
 
@@ -31,7 +43,7 @@
   //
   // element - Textarea or contenteditable element.
   function Dropdown(element, completer, option) {
-    this.$el       = Dropdown.findOrCreateElement(option);
+    this.$el       = Dropdown.createElement(option);
     this.completer = completer;
     this.id        = completer.id + 'dropdown';
     this._data     = []; // zipped data.
@@ -42,7 +54,7 @@
     if (option.listPosition) { this.setPosition = option.listPosition; }
     if (option.height) { this.$el.height(option.height); }
     var self = this;
-    $.each(['maxCount', 'placement', 'footer', 'header', 'className'], function (_i, name) {
+    $.each(['maxCount', 'placement', 'footer', 'header', 'noResultsMessage', 'className'], function (_i, name) {
       if (option[name] != null) { self[name] = option[name]; }
     });
     this._bindEvents(element);
@@ -53,18 +65,19 @@
     // Class methods
     // -------------
 
-    findOrCreateElement: function (option) {
+    createElement: function (option) {
       var $parent = option.appendTo;
       if (!($parent instanceof $)) { $parent = $($parent); }
-      var $el = $parent.children('.dropdown-menu')
-      if (!$el.length) {
-        $el = $('<ul class="dropdown-menu"></ul>').css({
+      var $el = $('<ul></ul>')
+        .addClass(option.dropdownClassName)
+        .attr('id', 'textcomplete-dropdown-' + option._oid)
+        .css({
           display: 'none',
           left: 0,
           position: 'absolute',
           zIndex: option.zIndex
-        }).appendTo($parent);
-      }
+        })
+        .appendTo($parent);
       return $el;
     }
   });
@@ -79,7 +92,7 @@
     footer:    null,
     header:    null,
     id:        null,
-    maxCount:  10,
+    maxCount:  null,
     placement: '',
     shown:     false,
     data:      [],     // Shown zipped data.
@@ -95,6 +108,7 @@
       this.$el.off('.' + this.id);
       this.$inputEl.off('.' + this.id);
       this.clear();
+      this.$el.remove();
       this.$el = this.$inputEl = this.completer = null;
       delete dropdownViews[this.id]
     },
@@ -103,21 +117,29 @@
       var contentsHtml = this._buildContents(zippedData);
       var unzippedData = $.map(this.data, function (d) { return d.value; });
       if (this.data.length) {
+        var strategy = zippedData[0].strategy;
+        if (strategy.id) {
+          this.$el.attr('data-strategy', strategy.id);
+        } else {
+          this.$el.removeAttr('data-strategy');
+        }
         this._renderHeader(unzippedData);
         this._renderFooter(unzippedData);
         if (contentsHtml) {
           this._renderContents(contentsHtml);
+          this._fitToBottom();
+          this._fitToRight();
           this._activateIndexedItem();
         }
         this._setScroll();
+      } else if (this.noResultsMessage) {
+        this._renderNoResultsMessage(unzippedData);
       } else if (this.shown) {
         this.deactivate();
       }
     },
 
-    setPosition: function (position) {
-      this.$el.css(this._applyPlacement(position));
-
+    setPosition: function (pos) {
       // Make the dropdown fixed if the input is also fixed
       // This can't be done during init, as textcomplete may be used on multiple elements on the same page
       // Because the same dropdown is reused behind the scenes, we need to recheck every time the dropdown is showed
@@ -127,10 +149,13 @@
         if($(this).css('position') === 'absolute') // The element has absolute positioning, so it's all OK
           return false;
         if($(this).css('position') === 'fixed') {
+          pos.top -= $window.scrollTop();
+          pos.left -= $window.scrollLeft();
           position = 'fixed';
           return false;
         }
       });
+      this.$el.css(this._applyPlacement(pos));
       this.$el.css({ position: position }); // Update positioning
 
       return this;
@@ -140,7 +165,7 @@
       this.$el.html('');
       this.data = [];
       this._index = 0;
-      this._$header = this._$footer = null;
+      this._$header = this._$footer = this._$noResultsMessage = null;
     },
 
     activate: function () {
@@ -195,6 +220,7 @@
     _data:    null,  // Currently shown zipped data.
     _index:   null,
     _$header: null,
+    _$noResultsMessage: null,
     _$footer: null,
 
     // Private methods
@@ -216,7 +242,7 @@
         $el = $el.closest('.textcomplete-item');
       }
       var datum = this.data[parseInt($el.data('index'), 10)];
-      this.completer.select(datum.value, datum.strategy);
+      this.completer.select(datum.value, datum.strategy, e);
       var self = this;
       // Deactive at next tick to allow other event handlers to know whether
       // the dropdown has been shown or not.
@@ -241,24 +267,58 @@
 
     _onKeydown: function (e) {
       if (!this.shown) { return; }
+
+      var command;
+
+      if ($.isFunction(this.option.onKeydown)) {
+        command = this.option.onKeydown(e, commands);
+      }
+
+      if (command == null) {
+        command = this._defaultKeydown(e);
+      }
+
+      switch (command) {
+        case commands.KEY_UP:
+          e.preventDefault();
+          this._up();
+          break;
+        case commands.KEY_DOWN:
+          e.preventDefault();
+          this._down();
+          break;
+        case commands.KEY_ENTER:
+          e.preventDefault();
+          this._enter(e);
+          break;
+        case commands.KEY_PAGEUP:
+          e.preventDefault();
+          this._pageup();
+          break;
+        case commands.KEY_PAGEDOWN:
+          e.preventDefault();
+          this._pagedown();
+          break;
+        case commands.KEY_ESCAPE:
+          e.preventDefault();
+          this.deactivate();
+          break;
+      }
+    },
+
+    _defaultKeydown: function (e) {
       if (this.isUp(e)) {
-        e.preventDefault();
-        this._up();
+        return commands.KEY_UP;
       } else if (this.isDown(e)) {
-        e.preventDefault();
-        this._down();
+        return commands.KEY_DOWN;
       } else if (this.isEnter(e)) {
-        e.preventDefault();
-        this._enter();
+        return commands.KEY_ENTER;
       } else if (this.isPageup(e)) {
-        e.preventDefault();
-        this._pageup();
+        return commands.KEY_PAGEUP;
       } else if (this.isPagedown(e)) {
-        e.preventDefault();
-        this._pagedown();
+        return commands.KEY_PAGEDOWN;
       } else if (this.isEscape(e)) {
-        e.preventDefault();
-        this.deactivate();
+        return commands.KEY_ESCAPE;
       }
     },
 
@@ -282,9 +342,9 @@
       this._setScroll();
     },
 
-    _enter: function () {
+    _enter: function (e) {
       var datum = this.data[parseInt(this._getActiveElement().data('index'), 10)];
-      this.completer.select(datum.value, datum.strategy);
+      this.completer.select(datum.value, datum.strategy, e);
       this.deactivate();
     },
 
@@ -348,7 +408,7 @@
         index = this.data.length;
         this.data.push(datum);
         html += '<li class="textcomplete-item" data-index="' + index + '"><a>';
-        html +=   datum.strategy.template(datum.value);
+        html +=   datum.strategy.template(datum.value, datum.term);
         html += '</a></li>';
       }
       return html;
@@ -374,6 +434,16 @@
       }
     },
 
+    _renderNoResultsMessage: function (unzippedData) {
+      if (this.noResultsMessage) {
+        if (!this._$noResultsMessage) {
+          this._$noResultsMessage = $('<li class="textcomplete-no-results-message"></li>').appendTo(this.$el);
+        }
+        var html = $.isFunction(this.noResultsMessage) ? this.noResultsMessage(unzippedData) : this.noResultsMessage;
+        this._$noResultsMessage.html(html);
+      }
+    },
+
     _renderContents: function (html) {
       if (this._$footer) {
         this._$footer.before(html);
@@ -382,13 +452,42 @@
       }
     },
 
+    _fitToBottom: function() {
+      var windowScrollBottom = $window.scrollTop() + $window.height();
+      var height = this.$el.height();
+      if ((this.$el.position().top + height) > windowScrollBottom) {
+        // only do this if we are not in an iframe
+        if (!this.completer.$iframe) {
+          this.$el.offset({top: windowScrollBottom - height});
+        }
+      }
+    },
+
+    _fitToRight: function() {
+      // We don't know how wide our content is until the browser positions us, and at that point it clips us
+      // to the document width so we don't know if we would have overrun it. As a heuristic to avoid that clipping
+      // (which makes our elements wrap onto the next line and corrupt the next item), if we're close to the right
+      // edge, move left. We don't know how far to move left, so just keep nudging a bit.
+      var tolerance = 30; // pixels. Make wider than vertical scrollbar because we might not be able to use that space.
+      var lastOffset = this.$el.offset().left, offset;
+      var width = this.$el.width();
+      var maxLeft = $window.width() - tolerance;
+      while (lastOffset + width > maxLeft) {
+        this.$el.offset({left: lastOffset - tolerance});
+        offset = this.$el.offset().left;
+        if (offset >= lastOffset) { break; }
+        lastOffset = offset;
+      }
+    },
+
     _applyPlacement: function (position) {
+      position.height = Math.min(this.$el.parent().height(), $window.height());
       // If the 'placement' option set to 'top', move the position above the element.
       if (this.placement.indexOf('top') !== -1) {
         // Overwrite the position object to set the 'bottom' property instead of the top.
         position = {
           top: 'auto',
-          bottom: this.$el.parent().height() - position.top + position.lineHeight,
+          bottom: position.height - position.top + position.lineHeight,
           left: position.left
         };
       } else {
@@ -406,4 +505,5 @@
   });
 
   $.fn.textcomplete.Dropdown = Dropdown;
+  $.extend($.fn.textcomplete, commands);
 }(jQuery);

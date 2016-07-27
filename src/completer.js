@@ -61,10 +61,6 @@
     return Object.prototype.toString.call(obj) === '[object String]';
   };
 
-  var isFunction = function (obj) {
-    return Object.prototype.toString.call(obj) === '[object Function]';
-  };
-
   var uniqueId = 0;
 
   function Completer(element, option) {
@@ -74,17 +70,32 @@
     this.views      = [];
     this.option     = $.extend({}, Completer._getDefaults(), option);
 
-    if (!this.$el.is('input[type=text]') && !this.$el.is('textarea') && !element.isContentEditable && element.contentEditable != 'true') {
+    if (!this.$el.is('input[type=text]') && !this.$el.is('input[type=search]') && !this.$el.is('textarea') && !element.isContentEditable && element.contentEditable != 'true') {
       throw new Error('textcomplete must be called on a Textarea or a ContentEditable.');
     }
 
-    if (element === document.activeElement) {
+    // use ownerDocument to fix iframe / IE issues
+    if (element === element.ownerDocument.activeElement) {
       // element has already been focused. Initialize view objects immediately.
       this.initialize()
     } else {
       // Initialize view objects lazily.
       var self = this;
       this.$el.one('focus.' + this.id, function () { self.initialize(); });
+
+      // Special handling for CKEditor: lazy init on instance load
+      if ((!this.option.adapter || this.option.adapter == 'CKEditor') && typeof CKEDITOR != 'undefined' && (this.$el.is('textarea'))) {
+        CKEDITOR.on("instanceReady", function(event) {
+          event.editor.once("focus", function(event2) {
+            // replace the element with the Iframe element and flag it as CKEditor
+            self.$el = $(event.editor.editable().$);
+            if (!self.option.adapter) {
+              self.option.adapter = $.fn.textcomplete['CKEditor'];
+            }
+            self.initialize();
+          });
+        });
+      }
     }
   }
 
@@ -92,6 +103,9 @@
     if (!Completer.DEFAULTS) {
       Completer.DEFAULTS = {
         appendTo: $('body'),
+        className: '',  // deprecated option
+        dropdownClassName: 'dropdown-menu textcomplete-dropdown',
+        maxCount: 10,
         zIndex: '100'
       };
     }
@@ -109,19 +123,33 @@
     adapter:    null,
     dropdown:   null,
     $el:        null,
+    $iframe:    null,
 
     // Public methods
     // --------------
 
     initialize: function () {
       var element = this.$el.get(0);
+      
+      // check if we are in an iframe
+      // we need to alter positioning logic if using an iframe
+      if (this.$el.prop('ownerDocument') !== document && window.frames.length) {
+        for (var iframeIndex = 0; iframeIndex < window.frames.length; iframeIndex++) {
+          if (this.$el.prop('ownerDocument') === window.frames[iframeIndex].document) {
+            this.$iframe = $(window.frames[iframeIndex].frameElement);
+            break;
+          }
+        }
+      }
+      
+      
       // Initialize view objects.
       this.dropdown = new $.fn.textcomplete.Dropdown(element, this, this.option);
       var Adapter, viewName;
       if (this.option.adapter) {
         Adapter = this.option.adapter;
       } else {
-        if (this.$el.is('textarea') || this.$el.is('input[type=text]')) {
+        if (this.$el.is('textarea') || this.$el.is('input[type=text]') || this.$el.is('input[type=search]')) {
           viewName = typeof element.selectionEnd === 'number' ? 'Textarea' : 'IETextarea';
         } else {
           viewName = 'ContentEditable';
@@ -142,6 +170,12 @@
       this.$el = this.adapter = this.dropdown = null;
     },
 
+    deactivate: function () {
+      if (this.dropdown) {
+        this.dropdown.deactivate();
+      }
+    },
+
     // Invoke textcomplete.
     trigger: function (text, skipUnchangedTerm) {
       if (!this.dropdown) { this.initialize(); }
@@ -150,7 +184,7 @@
       if (searchQuery.length) {
         var term = searchQuery[1];
         // Ignore shift-key, ctrl-key and so on.
-        if (skipUnchangedTerm && this._term === term) { return; }
+        if (skipUnchangedTerm && this._term === term && term !== "") { return; }
         this._term = term;
         this._search.apply(this, searchQuery);
       } else {
@@ -174,8 +208,10 @@
     //
     // value    - The selected element of the array callbacked from search func.
     // strategy - The Strategy object.
-    select: function (value, strategy) {
-      this.adapter.select(value, strategy);
+    // e        - Click or keydown event object.
+    select: function (value, strategy, e) {
+      this._term = null;
+      this.adapter.select(value, strategy, e);
       this.fire('change').fire('textComplete:select', value, strategy);
       this.adapter.focus();
     },
@@ -198,7 +234,7 @@
         var strategy = this.strategies[i];
         var context = strategy.context(text);
         if (context || context === '') {
-          var matchRegexp = isFunction(strategy.match) ? strategy.match(text) : strategy.match;
+          var matchRegexp = $.isFunction(strategy.match) ? strategy.match(text) : strategy.match;
           if (isString(context)) { text = context; }
           var match = text.match(matchRegexp);
           if (match) { return [strategy, match[strategy.index], match]; }
@@ -213,14 +249,14 @@
       strategy.search(term, function (data, stillSearching) {
         if (!self.dropdown.shown) {
           self.dropdown.activate();
-          self.dropdown.setPosition(self.adapter.getCaretPosition());
         }
         if (self._clearAtNext) {
           // The first callback in the current lock.
           self.dropdown.clear();
           self._clearAtNext = false;
         }
-        self.dropdown.render(self._zip(data, strategy));
+        self.dropdown.setPosition(self.adapter.getCaretPosition());
+        self.dropdown.render(self._zip(data, strategy, term));
         if (!stillSearching) {
           // The last callback in the current lock.
           free();
@@ -235,9 +271,9 @@
     //
     //  this._zip(['a', 'b'], 's');
     //  //=> [{ value: 'a', strategy: 's' }, { value: 'b', strategy: 's' }]
-    _zip: function (data, strategy) {
+    _zip: function (data, strategy, term) {
       return $.map(data, function (value) {
-        return { value: value, strategy: strategy };
+        return { value: value, strategy: strategy, term: term };
       });
     }
   });

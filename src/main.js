@@ -17,13 +17,18 @@ if (typeof jQuery === 'undefined') {
     if (console.warn) { console.warn(message); }
   };
 
+  var id = 1;
+
   $.fn.textcomplete = function (strategies, option) {
     var args = Array.prototype.slice.call(arguments);
     return this.each(function () {
+      var self = this;
       var $this = $(this);
       var completer = $this.data('textComplete');
       if (!completer) {
-        completer = new $.fn.textcomplete.Completer(this, option || {});
+        option || (option = {});
+        option._oid = id++;  // unique object id
+        completer = new $.fn.textcomplete.Completer(this, option);
         $this.data('textComplete', completer);
       }
       if (typeof strategies === 'string') {
@@ -45,7 +50,10 @@ if (typeof jQuery === 'undefined') {
             }
           });
         });
-        completer.register($.fn.textcomplete.Strategy.parse(strategies));
+        completer.register($.fn.textcomplete.Strategy.parse(strategies, {
+          el: self,
+          $el: $this
+        }));
       }
     });
   };

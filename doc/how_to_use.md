@@ -36,11 +36,12 @@ var strategy = {
   replace:    replaceFunc,
 
   // Optional                 // Default
-  index:      indexNumber,    // 2
-  template:   templateFunc,   // function (value) { return value; }
   cache:      cacheBoolean,   // false
   context:    contextFunc,    // function (text) { return true; }
-  idProperty: idPropertyStr   // null
+  id:         idString,       // null
+  idProperty: idPropertyStr,  // null
+  index:      indexNumber,    // 2
+  template:   templateFunc,   // function (value) { return value; }
 }
 ```
 
@@ -65,7 +66,7 @@ If you want to execute `callback` multiple times per a search, you SHOULD give `
 
 The `cacheBoolean` MUST be a Boolean. It defaults to `false`. If it is `true` the `searchFunc` will be memoized by `term` argument. This is useful to prevent excessive API access.
 
-TextComplete automatically make the dropdown unique when the callbacked array consists of Strings. If it consists of Objects and the dropdown shoud be unique, use `idPropertyStr` for teaching the specified property is good to identify each elements.
+TextComplete automatically make the dropdown unique when the callbacked array consists of Strings. If it consists of Objects and the dropdown should be unique, use `idPropertyStr` for teaching the specified property is good to identify each elements.
 
 ```js
 var searchFunc = function (term, callback, match) {
@@ -82,10 +83,10 @@ var searchFunc = function (term, callback, match) {
 };
 ```
 
-The `templateFunc` MUST be a Function which returns a string. The function is going to be called as an iteretor for the array given to the `callback` of `searchFunc`. You can change the style of each dropdown item.
+The `templateFunc` MUST be a Function which returns a string. The function is going to be called as an iterator for the array given to the `callback` of `searchFunc`. You can change the style of each dropdown item.
 
 ```js
-var templateFunc = function (value) {
+var templateFunc = function (value, term) {
   // `value` is an element of array callbacked by searchFunc.
   return '<b>' + value + '</b>';
 };
@@ -93,16 +94,16 @@ var templateFunc = function (value) {
 //   templateFunc = function (value) { return value; };
 ```
 
-The `replaceFunc` MUST be a Function which returns a String or an Array of two Strings. It is going to be invoked when a user will click and select an item of autocomplete dropdown.
+The `replaceFunc` MUST be a Function which returns a String, an Array of two Strings or `undefined`. It is invoked when a user will click and select an item of autocomplete dropdown.
 
 ```js
-var replaceFunc = function (value) { return '$1@' + value + ' '; };
+var replaceFunc = function (value, event) { return '$1@' + value + ' '; };
 ```
 
 The result is going to be used to replace the value of textarea using `String.prototype.replace` with `matchRegExpOrFunc`:
 
 ```js
-textarea.value = textarea.value.replace(matchRegExpOrFunc, replaceFunc(value));
+textarea.value = textarea.value.replace(matchRegExpOrFunc, replaceFunc(value, event));
 ```
 
 Suppose you want to do autocomplete for HTML elements, you may want to reposition the cursor in the middle of elements after the autocomplete. In this case, you can do that by making `replaceFunc` return an Array of two Strings. Then the cursor points between these two strings.
@@ -113,7 +114,11 @@ var replaceFunc = function (value) {
 };
 ```
 
-The `option` is an optional Object which MAY have `appendTo`, `height` , `maxCount`, `placement`, `header`, `footer`, `zIndex` and `debounce`. If `appendTo` is given, the element of dropdown is appended into the specified element. If `height` is given, the dropdown element's height will be fixed.
+If `undefined` is returned from a `replaceFunc`, textcomplete does not replace the text.
+
+If `idString` is given, textcomplete sets the value as `data-strategy` attribute of the dropdown element. You can change dropdown style by using the property.
+
+The `option` is an optional Object which MAY have `appendTo`, `height` , `maxCount`, `placement`, `header`, `footer`, `zIndex`, `debounce` and `onKeydown`. If `appendTo` is given, the element of dropdown is appended into the specified element. If `height` is given, the dropdown element's height will be fixed.
 
 ```js
 var option = {
@@ -126,7 +131,10 @@ var option = {
   zIndex:    zIndexStr,       // '100'
   debounce:  debounceNumber,  // undefined
   adapter:   adapterClass,    // undefined
-  className: classNameStr     // ''
+  onKeydown: onKeydownFunc,   // undefined
+  noResultsMessage: noResultsMessageStrOrFunc,  // undefined
+  dropdownClassName: dropdownClassNameStr, // 'dropdown-menu textcomplete-dropdown'
+  className: classNameStr,    // DEPRECATED ''
 };
 ```
 
@@ -134,7 +142,22 @@ The `maxCountNumber` MUST be a Number and default to 10. Even if `searchFunc` ca
 
 If `placementStr` includes 'top', it positions the drop-down to above the caret. If `placementStr` includes 'absleft' and 'absright', it positions the drop-down absolutely to the very left and right respectively. You can mix them.
 
-You can override the z-index property and the class attribute of dropdown element using `zIndex` and `className` option respectively.
+You can override the z-index property and the class attribute of dropdown element using `zIndex` and `dropdownClassName` option respectively.
+
+If you want to add some additional keyboard shortcut, set a function to `onKeydown` option. The function will be called with two arguments, the keydown event and commands hash.
+
+```js
+var onKeydownFunc = function (e, commands) {
+  // `commands` has `KEY_UP`, `KEY_DOWN`, `KEY_ENTER`, `KEY_PAGEUP`, `KEY_PAGEDOWN`,
+  // `KEY_ESCAPE` and `SKIP_DEFAULT`.
+  if (e.ctrlKey && e.keyCode === 74) {
+    // Treat CTRL-J as enter key.
+    return commands.KEY_ENTER;
+  }
+  // If the function does not return a result or undefined is returned,
+  // the plugin uses default behavior.
+};
+```
 
 Textcomplete debounces `debounceNumber` milliseconds, so `searchFunc` is not called until user stops typing.
 
